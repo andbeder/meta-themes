@@ -1,0 +1,25 @@
+{
+  "name": "salesforce-lm-studio-processor",
+  "version": "1.0.0",
+  "description": "A Node.js app that scans Salesforce objects, processes fields with LM Studio, and outputs results to CSV",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "xml-crypto": "^6.1.2",
+    "xmlbuilder2": "^3.1.1"
+  },
+  "keywords": [
+    "salesforce",
+    "lm-studio",
+    "csv",
+    "node.js"
+  ],
+  "author": "",
+  "license": "ISC"
+}
