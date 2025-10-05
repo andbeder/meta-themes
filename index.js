@@ -11,15 +11,17 @@ async function main() {
   const args = process.argv.slice(2);
 
   if (args.length < 4) {
-    console.error('Usage: node index.js <salesforce-object> <field-name> <prompt> <csv-file>');
-    console.error('Example: node index.js Employee_Survey_Response__c Q6 "Extract meta-themes from this survey response" survey-ids.csv');
+    console.error('Usage: node index.js <salesforce-object> <field-names> <prompt> <csv-file>');
+    console.error('Example: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv');
+    console.error('Multiple fields: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes" survey-ids.csv');
     process.exit(1);
   }
 
-  const [objectName, fieldName, prompt, csvFile] = args;
+  const [objectName, fieldNames, prompt, csvFile] = args;
+  const fields = fieldNames.split(',').map(field => field.trim());
 
   console.log(`Scanning Salesforce object: ${objectName}`);
-  console.log(`Reading field: ${fieldName}`);
+  console.log(`Reading fields: ${fields.join(', ')}`);
   console.log(`Using prompt: "${prompt}"`);
   console.log(`Using CSV file: ${csvFile}`);
 
@@ -34,9 +36,13 @@ async function main() {
     console.log('Authenticating to Salesforce...');
     const { accessToken, instanceUrl } = await authorize();
 
+    // Get field metadata
+    console.log('Retrieving field metadata...');
+    const fieldMetadata = await getFieldMetadata(accessToken, instanceUrl, objectName, fields);
+
     // Query Salesforce records
     console.log('Querying Salesforce records...');
-    const records = await querySalesforceRecords(accessToken, instanceUrl, objectName, fieldName, filterField, filterValues);
+    const records = await querySalesforceRecords(accessToken, instanceUrl, objectName, fields, filterField, filterValues);
 
     console.log(`Found ${records.length} records`);
 
@@ -48,13 +54,14 @@ async function main() {
       const record = records[i];
       console.log(`Processing record ${i + 1}/${records.length}: ${record.Id}`);
 
-      if (record[fieldName]) {
+      const combinedText = combineFieldsWithLabels(record, fields, fieldMetadata);
+      if (combinedText.trim()) {
         try {
-          const response = await sendToLMStudio(prompt, record[fieldName]);
+          const response = await sendToLMStudio(prompt, combinedText);
           results.push({
             recordId: record.Id,
             [filterField]: record[filterField],
-            originalText: record[fieldName],
+            originalText: combinedText,
             response: response
           });
         } catch (error) {
@@ -62,17 +69,17 @@ async function main() {
           results.push({
             recordId: record.Id,
             [filterField]: record[filterField],
-            originalText: record[fieldName],
+            originalText: combinedText,
             response: `Error: ${error.message}`
           });
         }
       } else {
-        console.log(`Skipping record ${record.Id} - field ${fieldName} is empty`);
+        console.log(`Skipping record ${record.Id} - all specified fields are empty`);
       }
     }
 
     // Write results to CSV
-    const outputFile = `${objectName}_${fieldName}_results.csv`;
+    const outputFile = `${objectName}_${fields.join('_')}_results.csv`;
     await writeResultsToCSV(results, outputFile, filterField);
 
     console.log(`Results written to ${outputFile}`);
@@ -90,14 +97,20 @@ async function readCsvFile(csvFilePath) {
     let filterField = null;
 
     fs.createReadStream(csvFilePath)
-      .pipe(csv())
+      .pipe(csv({
+        skipEmptyLines: true,
+        stripBOM: true  // This removes the BOM character
+      }))
       .on('headers', (headers) => {
-        filterField = headers[0]; // Use the first column as the filter field
+        // Clean the header to remove any BOM or whitespace
+        filterField = headers[0].replace(/^\uFEFF/, '').trim();
       })
       .on('data', (data) => {
-        const value = data[Object.keys(data)[0]];
+        const firstKey = Object.keys(data)[0];
+        const value = data[firstKey];
         if (value && value.trim()) {
-          results.push(value.trim());
+          // Clean the value to remove any BOM or extra whitespace
+          results.push(value.replace(/^\uFEFF/, '').trim());
         }
       })
       .on('end', () => {
@@ -109,10 +122,54 @@ async function readCsvFile(csvFilePath) {
   });
 }
 
-async function querySalesforceRecords(accessToken, instanceUrl, objectName, fieldName, filterField, filterValues) {
+async function getFieldMetadata(accessToken, instanceUrl, objectName, fields) {
+  const url = `${instanceUrl}/services/data/v58.0/sobjects/${objectName}/describe`;
+
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const fieldMap = {};
+    response.data.fields.forEach(field => {
+      if (fields.includes(field.name)) {
+        fieldMap[field.name] = {
+          label: field.label,
+          name: field.name
+        };
+      }
+    });
+
+    return fieldMap;
+  } catch (error) {
+    if (error.response) {
+      throw new Error(`Salesforce Metadata API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    }
+    throw new Error(`Network error: ${error.message}`);
+  }
+}
+
+function combineFieldsWithLabels(record, fields, fieldMetadata) {
+  const parts = [];
+
+  fields.forEach(fieldName => {
+    if (record[fieldName] && record[fieldName].trim()) {
+      const label = fieldMetadata[fieldName]?.label || fieldName;
+      parts.push(`${label}: ${record[fieldName].trim()}`);
+    }
+  });
+
+  return parts.join('\n\n');
+}
+
+async function querySalesforceRecords(accessToken, instanceUrl, objectName, fields, filterField, filterValues) {
   // Create IN clause for filtering
   const filterClause = filterValues.map(value => `'${value}'`).join(',');
-  const query = `SELECT Id, ${fieldName}, ${filterField} FROM ${objectName} WHERE ${filterField} IN (${filterClause}) LIMIT 200`;
+  const fieldList = ['Id', ...fields, filterField].join(', ');
+  const query = `SELECT ${fieldList} FROM ${objectName} WHERE ${filterField} IN (${filterClause}) LIMIT 200`;
   const url = `${instanceUrl}/services/data/v58.0/query`;
 
   try {
@@ -185,4 +242,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main, readCsvFile, querySalesforceRecords, sendToLMStudio, writeResultsToCSV };
+module.exports = { main, readCsvFile, getFieldMetadata, combineFieldsWithLabels, querySalesforceRecords, sendToLMStudio, writeResultsToCSV };

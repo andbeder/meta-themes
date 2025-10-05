@@ -1,13 +1,15 @@
 # Salesforce LM Studio Processor
 
-A Node.js application that scans Salesforce objects for specific records defined in a CSV file, processes specified fields with LM Studio, and outputs results to CSV.
+A Node.js application that scans Salesforce objects for specific records defined in a CSV file, processes one or more specified fields with LM Studio, and outputs results to CSV.
 
 ## Features
 
 - Connects to Salesforce using existing JWT authentication
 - Reads a CSV file to get a list of specific records to query
 - Queries Salesforce objects for records matching the CSV filter criteria
-- Processes specified fields with LM Studio using custom prompts
+- Processes one or multiple specified fields with LM Studio using custom prompts
+- Retrieves field metadata from Salesforce to include field labels for context
+- Combines multiple fields with their labels before sending to LM Studio
 - Outputs results to CSV including Salesforce Record ID, filter field value, original text, and LM Studio response
 - Handles errors gracefully and continues processing
 
@@ -34,20 +36,32 @@ A Node.js application that scans Salesforce objects for specific records defined
 ## Usage
 
 ```bash
-node index.js <salesforce-object> <field-name> <prompt> <csv-file>
+node index.js <salesforce-object> <field-names> <prompt> <csv-file>
 ```
 
-### Example
+Where `<field-names>` can be:
+- A single field: `Q6_Recognition_Thoughts__c`
+- Multiple fields (comma-separated): `Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c`
 
+### Examples
+
+#### Single Field
 ```bash
-node index.js Employee_Survey_Response__c Q6 "Extract meta-themes from this survey response" survey-ids.csv
+node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv
+```
+
+#### Multiple Fields
+```bash
+node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes from this survey response" survey-ids.csv
 ```
 
 This will:
 1. Read `survey-ids.csv` to get a list of Employee_Record_ID__c values
 2. Query `Employee_Survey_Response__c` records where `Employee_Record_ID__c` matches the CSV values
-3. Send each Q6 field value to LM Studio with the prompt "Extract meta-themes from this survey response"
-4. Save results to `Employee_Survey_Response__c_Q6_results.csv`
+3. Retrieve field metadata from Salesforce to get field labels
+4. For multiple fields, combine them with labels (e.g., "Recognition Thoughts: [content]\n\nSupervisor Skills: [content]")
+5. Send the combined text to LM Studio with the specified prompt
+6. Save results to `Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_Q4_Supervisor_Skills__c_results.csv`
 
 ### CSV File Format
 
@@ -74,6 +88,17 @@ node index.js ...
 
 ### Query Limit
 The app currently limits queries to 200 records. You can modify this in the `querySalesforceRecords` function in `index.js`.
+
+### Field Processing
+- **Single Field**: Sends the field content directly to LM Studio
+- **Multiple Fields**: Retrieves field labels from Salesforce metadata and combines fields as:
+  ```
+  Field Label 1: Content from field 1
+
+  Field Label 2: Content from field 2
+  ```
+- Only fields with non-empty content are included in the combined text
+- If all specified fields are empty for a record, that record is skipped
 
 ### CSV File Processing
 The app reads the first column of the CSV file as the filter field and uses all non-empty values for filtering Salesforce records.
