@@ -165,31 +165,124 @@ function combineFieldsWithLabels(record, fields, fieldMetadata) {
   return parts.join('\n\n');
 }
 
-async function querySalesforceRecords(accessToken, instanceUrl, objectName, fields, filterField, filterValues) {
-  // Create IN clause for filtering
-  const filterClause = filterValues.map(value => `'${value}'`).join(',');
+function chunkArray(array, chunkSize) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    chunks.push(array.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+async function querySalesforceRecordsChunk(accessToken, instanceUrl, objectName, fields, filterField, filterValuesChunk, chunkIndex, totalChunks) {
+  const allRecords = [];
+  let totalRecords = 0;
+  let pageCount = 0;
+
+  // Create IN clause for filtering this chunk
+  const filterClause = filterValuesChunk.map(value => `'${value}'`).join(',');
   const fieldList = ['Id', ...fields, filterField].join(', ');
-  const query = `SELECT ${fieldList} FROM ${objectName} WHERE ${filterField} IN (${filterClause}) LIMIT 200`;
-  const url = `${instanceUrl}/services/data/v58.0/query`;
+  const query = `SELECT ${fieldList} FROM ${objectName} WHERE ${filterField} IN (${filterClause}) ORDER BY Id`;
+
+  let nextRecordsUrl = null;
+  let isFirstQuery = true;
 
   try {
-    const response = await axios.get(url, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      params: {
-        q: query
-      }
-    });
+    do {
+      pageCount++;
+      let url, params;
 
-    return response.data.records || [];
+      if (isFirstQuery) {
+        // First query with LIMIT
+        url = `${instanceUrl}/services/data/v58.0/query`;
+        params = { q: `${query} LIMIT 200` };
+        isFirstQuery = false;
+      } else {
+        // Subsequent queries using nextRecordsUrl
+        url = `${instanceUrl}${nextRecordsUrl}`;
+        params = {};
+      }
+
+      console.log(`  Chunk ${chunkIndex}/${totalChunks}, Page ${pageCount}: Fetching...`);
+
+      const response = await axios.get(url, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        params: params
+      });
+
+      const data = response.data;
+      const records = data.records || [];
+
+      allRecords.push(...records);
+      totalRecords += records.length;
+
+      console.log(`  Chunk ${chunkIndex}/${totalChunks}, Page ${pageCount}: Retrieved ${records.length} records (Chunk Total: ${totalRecords})`);
+
+      // Check if there are more records
+      nextRecordsUrl = data.nextRecordsUrl || null;
+
+      // Safety check to prevent infinite loops
+      if (pageCount > 100) {
+        console.warn(`  Warning: Reached maximum page limit (100) for chunk ${chunkIndex}. Stopping pagination.`);
+        break;
+      }
+
+    } while (nextRecordsUrl);
+
+    console.log(`  Chunk ${chunkIndex}/${totalChunks} complete: ${totalRecords} records retrieved in ${pageCount} pages`);
+    return allRecords;
+
   } catch (error) {
     if (error.response) {
-      throw new Error(`Salesforce API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+      throw new Error(`Salesforce API error (Chunk ${chunkIndex}): ${error.response.status} - ${JSON.stringify(error.response.data)}`);
     }
-    throw new Error(`Network error: ${error.message}`);
+    throw new Error(`Network error (Chunk ${chunkIndex}): ${error.message}`);
   }
+}
+
+async function querySalesforceRecords(accessToken, instanceUrl, objectName, fields, filterField, filterValues) {
+  const CHUNK_SIZE = 450; // Stay well under 500 limit for safety
+
+  // Check if we need to chunk the filter values
+  if (filterValues.length <= CHUNK_SIZE) {
+    console.log(`  Single query: ${filterValues.length} filter values (under ${CHUNK_SIZE} limit)`);
+    return await querySalesforceRecordsChunk(accessToken, instanceUrl, objectName, fields, filterField, filterValues, 1, 1);
+  }
+
+  // Split filter values into chunks
+  const chunks = chunkArray(filterValues, CHUNK_SIZE);
+  console.log(`  Chunking required: ${filterValues.length} filter values split into ${chunks.length} chunks of max ${CHUNK_SIZE}`);
+
+  const allRecords = [];
+  let totalRecords = 0;
+
+  // Process each chunk
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkRecords = await querySalesforceRecordsChunk(
+      accessToken,
+      instanceUrl,
+      objectName,
+      fields,
+      filterField,
+      chunks[i],
+      i + 1,
+      chunks.length
+    );
+
+    allRecords.push(...chunkRecords);
+    totalRecords += chunkRecords.length;
+
+    // Add a small delay between chunks to be nice to the API
+    if (i < chunks.length - 1) {
+      console.log(`  Waiting 1 second before next chunk...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  console.log(`  All chunks complete: ${totalRecords} total records retrieved from ${chunks.length} chunks`);
+  return allRecords;
 }
 
 async function sendToLMStudio(prompt, text) {
@@ -242,4 +335,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main, readCsvFile, getFieldMetadata, combineFieldsWithLabels, querySalesforceRecords, sendToLMStudio, writeResultsToCSV };
+module.exports = { main, readCsvFile, getFieldMetadata, combineFieldsWithLabels, chunkArray, querySalesforceRecordsChunk, querySalesforceRecords, sendToLMStudio, writeResultsToCSV };
