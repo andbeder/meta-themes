@@ -124,13 +124,22 @@ export LM_STUDIO_URL=http://localhost:8080/v1/chat/completions
 node index.js ...
 ```
 
-#### Microsoft Copilot
-To use Copilot, you need to set environment variables:
+#### Microsoft Copilot (Azure OpenAI)
+To use Azure OpenAI, you need to set environment variables:
 
 ```bash
-export COPILOT_API_KEY=your_copilot_api_key
-export COPILOT_API_URL=https://api.github.com/copilot_internal/v2/token  # Optional, uses default if not set
+export COPILOT_API_KEY=your_azure_openai_api_key
+export COPILOT_API_URL=https://your-resource.openai.azure.com
+export COPILOT_DEPLOYMENT=gpt-5-chat  # Optional, defaults to gpt-5-chat
+export AZURE_API_VERSION=2024-02-15-preview  # Optional, defaults to 2024-02-15-preview
 node index.js ... -c
+```
+
+Example:
+```bash
+export COPILOT_API_KEY="your_key_here"
+export COPILOT_API_URL="https://abede-mgglef38-eastus2.openai.azure.com"
+node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv -c
 ```
 
 ### Query Limit

@@ -381,11 +381,20 @@ async function sendToLMStudio(prompt, text) {
 
 async function sendToCopilot(prompt, text) {
   const copilotApiKey = process.env.COPILOT_API_KEY;
-  const copilotUrl = process.env.COPILOT_API_URL || 'https://api.github.com/copilot_internal/v2/token';
+  const copilotUrl = process.env.COPILOT_API_URL;
+  const deployment = process.env.COPILOT_DEPLOYMENT || 'gpt-5-chat';
+  const apiVersion = process.env.AZURE_API_VERSION || '2024-02-15-preview';
 
   if (!copilotApiKey) {
     throw new Error('COPILOT_API_KEY environment variable is required for Copilot integration');
   }
+
+  if (!copilotUrl) {
+    throw new Error('COPILOT_API_URL environment variable is required. Set it to your Azure OpenAI base URL (e.g., https://xxx.openai.azure.com)');
+  }
+
+  // Build Azure OpenAI endpoint URL
+  const fullUrl = `${copilotUrl}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
 
   const requestBody = {
     messages: [
@@ -398,22 +407,25 @@ async function sendToCopilot(prompt, text) {
         content: `${prompt}\n\nText to analyze: ${text}`
       }
     ],
-    model: "gpt-4",
     temperature: 0.7,
     max_tokens: 500
   };
 
   try {
-    const response = await axios.post(copilotUrl, requestBody, {
+    const response = await axios.post(fullUrl, requestBody, {
       headers: {
-        'Authorization': `Bearer ${copilotApiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'api-key': copilotApiKey,
+        'Content-Type': 'application/json'
       },
       timeout: 60000 // 60 second timeout for Copilot
     });
 
-    return response.data.choices[0].message.content;
+    // Handle Azure OpenAI response format
+    if (response.data.choices && response.data.choices[0]) {
+      return response.data.choices[0].message.content;
+    } else {
+      throw new Error(`Unexpected API response format: ${JSON.stringify(response.data)}`);
+    }
   } catch (error) {
     if (error.response) {
       throw new Error(`Copilot API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
