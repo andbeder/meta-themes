@@ -174,6 +174,49 @@ Results are saved to a CSV file named `{ObjectName}_{FieldName}_results.csv` wit
 - Network timeouts are set to 30 seconds for LM Studio requests, 60 seconds for Copilot
 - Salesforce authentication errors will stop the process
 
+## Summarization Tool
+
+The `summarize.js` script allows you to batch-summarize the AI responses from the output CSV file, creating higher-level meta-themes across multiple responses.
+
+### Usage
+
+```bash
+node summarize.js <filename> -b <batch-size> -p <prompt> [-c]
+```
+
+Where:
+- `<filename>`: The CSV file output from index.js
+- `-b <batch-size>`: Number of responses to include in each batch
+- `-p <prompt>`: The summarization prompt to use
+- `-c`: Optional flag to use Copilot instead of LM Studio
+
+### Examples
+
+#### LM Studio (Default)
+```bash
+node summarize.js Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_results.csv -b 5 -p "Summarize the key meta-themes across these survey responses"
+```
+
+#### Microsoft Copilot
+```bash
+node summarize.js Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_results.csv -b 10 -p "Identify common patterns and themes" -c
+```
+
+### Output
+
+The tool creates a timestamped summary file with:
+- Summary of each batch
+- Batch metadata (batch number, size)
+- Overall report header with prompt and generation details
+
+Example output filename: `Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_results_summary_batch5_2025-10-07T18-49-28.txt`
+
+### Configuration
+
+Uses the same environment variables as `index.js`:
+- LM Studio: `LM_STUDIO_URL` (optional, defaults to http://127.0.0.1:1234)
+- Copilot: `COPILOT_API_KEY`, `COPILOT_API_URL`, `COPILOT_DEPLOYMENT`, `AZURE_API_VERSION`
+
 ## Troubleshooting
 
 1. **Salesforce Authentication Issues**: Ensure all required environment variables are set correctly
