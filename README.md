@@ -1,13 +1,13 @@
 # Salesforce LM Studio Processor
 
-A Node.js application that scans Salesforce objects for specific records defined in a CSV file, processes one or more specified fields with LM Studio, and outputs results to CSV.
+A Node.js application that scans Salesforce objects for specific records defined in a CSV file, processes one or more specified fields with LM Studio or Microsoft Copilot, and outputs results to CSV.
 
 ## Features
 
 - Connects to Salesforce using existing JWT authentication
 - Reads a CSV file to get a list of specific records to query
 - Queries Salesforce objects for records matching the CSV filter criteria
-- Processes one or multiple specified fields with LM Studio using custom prompts
+- Processes one or multiple specified fields with LM Studio or Microsoft Copilot using custom prompts
 - Retrieves field metadata from Salesforce to include field labels for context
 - Combines multiple fields with their labels before sending to LM Studio
 - **Resumable processing**: Automatically skips already processed records from existing output files
@@ -20,7 +20,9 @@ A Node.js application that scans Salesforce objects for specific records defined
 ## Prerequisites
 
 1. **Node.js** (v14 or higher)
-2. **LM Studio** running locally on default port 1234
+2. **AI Service** - Choose one:
+   - **LM Studio** running locally on port 1234 (default)
+   - **Microsoft Copilot** with API access
 3. **Salesforce Environment Variables** (same as used by sfdcAuth.js):
    - `SFDC_CLIENT_ID`
    - `SFDC_USERNAME`
@@ -40,23 +42,33 @@ A Node.js application that scans Salesforce objects for specific records defined
 ## Usage
 
 ```bash
-node index.js <salesforce-object> <field-names> <prompt> <csv-file>
+node index.js <salesforce-object> <field-names> <prompt> <csv-file> [-c]
 ```
 
-Where `<field-names>` can be:
-- A single field: `Q6_Recognition_Thoughts__c`
-- Multiple fields (comma-separated): `Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c`
+Where:
+- `<field-names>` can be:
+  - A single field: `Q6_Recognition_Thoughts__c`
+  - Multiple fields (comma-separated): `Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c`
+- `-c` flag: Use Microsoft Copilot instead of LM Studio
 
 ### Examples
 
-#### Single Field
+#### LM Studio (Default)
 ```bash
+# Single field
 node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv
+
+# Multiple fields
+node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes from this survey response" survey-ids.csv
 ```
 
-#### Multiple Fields
+#### Microsoft Copilot
 ```bash
-node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes from this survey response" survey-ids.csv
+# Single field with Copilot
+node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv -c
+
+# Multiple fields with Copilot
+node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes from this survey response" survey-ids.csv -c
 ```
 
 This will:
@@ -64,7 +76,7 @@ This will:
 2. Query `Employee_Survey_Response__c` records where `Employee_Record_ID__c` matches the CSV values
 3. Retrieve field metadata from Salesforce to get field labels
 4. For multiple fields, combine them with labels (e.g., "Recognition Thoughts: [content]\n\nSupervisor Skills: [content]")
-5. Send the combined text to LM Studio with the specified prompt
+5. Send the combined text to the selected AI service (LM Studio or Copilot) with the specified prompt
 6. Save results to `Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_Q4_Supervisor_Skills__c_results.csv`
 
 ### Resume Functionality
@@ -102,7 +114,9 @@ The first column header will be used as the filter field name in the Salesforce 
 
 ## Configuration
 
-### LM Studio URL
+### AI Service Configuration
+
+#### LM Studio (Default)
 By default, the app connects to LM Studio at `http://localhost:1234/v1/chat/completions`. You can override this with the `LM_STUDIO_URL` environment variable:
 
 ```bash
@@ -110,11 +124,20 @@ export LM_STUDIO_URL=http://localhost:8080/v1/chat/completions
 node index.js ...
 ```
 
+#### Microsoft Copilot
+To use Copilot, you need to set environment variables:
+
+```bash
+export COPILOT_API_KEY=your_copilot_api_key
+export COPILOT_API_URL=https://api.github.com/copilot_internal/v2/token  # Optional, uses default if not set
+node index.js ... -c
+```
+
 ### Query Limit
 The app currently limits queries to 200 records. You can modify this in the `querySalesforceRecords` function in `index.js`.
 
 ### Field Processing
-- **Single Field**: Sends the field content directly to LM Studio
+- **Single Field**: Sends the field content directly to the selected AI service
 - **Multiple Fields**: Retrieves field labels from Salesforce metadata and combines fields as:
   ```
   Field Label 1: Content from field 1
@@ -138,15 +161,17 @@ Results are saved to a CSV file named `{ObjectName}_{FieldName}_results.csv` wit
 ## Error Handling
 
 - Records with empty/null field values are skipped
-- LM Studio API errors are captured and included in the CSV output
-- Network timeouts are set to 30 seconds for LM Studio requests
+- AI service API errors are captured and included in the CSV output
+- Network timeouts are set to 30 seconds for LM Studio requests, 60 seconds for Copilot
 - Salesforce authentication errors will stop the process
 
 ## Troubleshooting
 
 1. **Salesforce Authentication Issues**: Ensure all required environment variables are set correctly
 2. **LM Studio Connection Issues**: Verify LM Studio is running and accessible at the configured URL
-3. **Field Not Found**: Ensure the field name exists on the specified Salesforce object
-4. **Permission Issues**: Ensure your Salesforce user has read access to the specified object and field
-5. **Resume Issues**: If resume detection isn't working, check that the output CSV file has the correct column headers
-6. **Large Datasets**: For very large datasets (>20,000 records), the system automatically chunks queries to respect Salesforce limits
+3. **Copilot Authentication Issues**: Ensure `COPILOT_API_KEY` environment variable is set correctly
+4. **Field Not Found**: Ensure the field name exists on the specified Salesforce object
+5. **Permission Issues**: Ensure your Salesforce user has read access to the specified object and field
+6. **Resume Issues**: If resume detection isn't working, check that the output CSV file has the correct column headers
+7. **Large Datasets**: For very large datasets (>20,000 records), the system automatically chunks queries to respect Salesforce limits
+8. **AI Service Timeout**: Copilot requests timeout after 60 seconds, LM Studio after 30 seconds

@@ -10,20 +10,26 @@ const authorize = require('./sfdcJwtAuth');
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.length < 4) {
-    console.error('Usage: node index.js <salesforce-object> <field-names> <prompt> <csv-file>');
+  // Check for -c flag
+  const useCopilot = args.includes('-c');
+  const filteredArgs = args.filter(arg => arg !== '-c');
+
+  if (filteredArgs.length < 4) {
+    console.error('Usage: node index.js <salesforce-object> <field-names> <prompt> <csv-file> [-c]');
     console.error('Example: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv');
     console.error('Multiple fields: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes" survey-ids.csv');
+    console.error('Use Copilot: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes" survey-ids.csv -c');
     process.exit(1);
   }
 
-  const [objectName, fieldNames, prompt, csvFile] = args;
+  const [objectName, fieldNames, prompt, csvFile] = filteredArgs;
   const fields = fieldNames.split(',').map(field => field.trim());
 
   console.log(`Scanning Salesforce object: ${objectName}`);
   console.log(`Reading fields: ${fields.join(', ')}`);
   console.log(`Using prompt: "${prompt}"`);
   console.log(`Using CSV file: ${csvFile}`);
+  console.log(`AI Service: ${useCopilot ? 'Microsoft Copilot' : 'LM Studio'}`);
 
   try {
     // Read CSV file to get filter data
@@ -73,7 +79,9 @@ async function main() {
       const combinedText = combineFieldsWithLabels(record, fields, fieldMetadata);
       if (combinedText.trim()) {
         try {
-          const response = await sendToLMStudio(prompt, combinedText);
+          const response = useCopilot ?
+            await sendToCopilot(prompt, combinedText) :
+            await sendToLMStudio(prompt, combinedText);
           const result = {
             recordId: record.Id,
             [filterField]: record[filterField],
@@ -370,6 +378,49 @@ async function sendToLMStudio(prompt, text) {
   }
 }
 
+async function sendToCopilot(prompt, text) {
+  const copilotApiKey = process.env.COPILOT_API_KEY;
+  const copilotUrl = process.env.COPILOT_API_URL || 'https://api.github.com/copilot_internal/v2/token';
+
+  if (!copilotApiKey) {
+    throw new Error('COPILOT_API_KEY environment variable is required for Copilot integration');
+  }
+
+  const requestBody = {
+    messages: [
+      {
+        role: "system",
+        content: "You are a helpful AI assistant that analyzes text and provides insights based on the given prompt."
+      },
+      {
+        role: "user",
+        content: `${prompt}\n\nText to analyze: ${text}`
+      }
+    ],
+    model: "gpt-4",
+    temperature: 0.7,
+    max_tokens: 500
+  };
+
+  try {
+    const response = await axios.post(copilotUrl, requestBody, {
+      headers: {
+        'Authorization': `Bearer ${copilotApiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      timeout: 60000 // 60 second timeout for Copilot
+    });
+
+    return response.data.choices[0].message.content;
+  } catch (error) {
+    if (error.response) {
+      throw new Error(`Copilot API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    }
+    throw new Error(`Copilot connection error: ${error.message}`);
+  }
+}
+
 async function appendResultsToCSV(results, filename, filterField, skipHeaderCheck = false) {
   if (results.length === 0) return;
 
@@ -399,4 +450,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main, getProcessedRecordIds, readCsvFile, getFieldMetadata, combineFieldsWithLabels, chunkArray, querySalesforceRecordsChunk, querySalesforceRecords, sendToLMStudio, appendResultsToCSV, writeResultsToCSV };
+module.exports = { main, getProcessedRecordIds, readCsvFile, getFieldMetadata, combineFieldsWithLabels, chunkArray, querySalesforceRecordsChunk, querySalesforceRecords, sendToLMStudio, sendToCopilot, appendResultsToCSV, writeResultsToCSV };
