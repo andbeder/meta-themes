@@ -9,8 +9,7 @@
       "Bash(echo:*)",
       "Bash(export COPILOT_API_URL=\"https://testab.openai.azure.com/openai/deployments/gpt-5-chat/chat/completions\")",
       "Bash(COPILOT_API_URL=\"https://abede-mgglef38-eastus2.services.ai.azure.com/models\" COPILOT_API_KEY=\"6bTfE4fnNQ8eSFz7s34sETT8cCwhu4ufnZI9WBItxInxYWFe5NvhJQQJ99BJACHYHv6XJ3w3AAAAACOGM1Wt\" node test-copilot.js)",
-      "Bash(export COPILOT_API_URL=\"https://abede-mgglef38-eastus2.services.ai.azure.com/models\")",
-      "Bash(export COPILOT_API_KEY=\"6bTfE4fnNQ8eSFz7s34sETT8cCwhu4ufnZI9WBItxInxYWFe5NvhJQQJ99BJACHYHv6XJ3w3AAAAACOGM1Wt\")"
+      "Bash(export COPILOT_API_URL=\"https://abede-mgglef38-eastus2.services.ai.azure.com/models\")"
     ],
     "deny": [],
     "ask": []
