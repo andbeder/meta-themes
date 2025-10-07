@@ -34,18 +34,19 @@ async function main() {
   try {
     // Read CSV file to get filter data
     console.log('Reading CSV file...');
-    const { filterField, filterValues } = await readCsvFile(csvFile);
+    const { filterField, filterValues: allFilterValues } = await readCsvFile(csvFile);
     console.log(`Filter field: ${filterField}`);
-    console.log(`Found ${filterValues.length} values to filter by`);
+    console.log(`Found ${allFilterValues.length} values to filter by`);
 
     // Check for existing output and exclude already processed records
     const outputFile = `${objectName}_${fields.join('_')}_results.csv`;
     const processedIds = await getProcessedRecordIds(outputFile);
 
+    let filterValues = allFilterValues;
     if (processedIds.size > 0) {
       console.log(`Found existing output file with ${processedIds.size} already processed records`);
-      const originalCount = filterValues.length;
-      filterValues = filterValues.filter(value => !processedIds.has(value));
+      const originalCount = allFilterValues.length;
+      filterValues = allFilterValues.filter(value => !processedIds.has(value));
       console.log(`Filtered ${originalCount - filterValues.length} already processed records. ${filterValues.length} remaining to process.`);
 
       if (filterValues.length === 0) {
