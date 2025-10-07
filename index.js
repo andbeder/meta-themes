@@ -32,6 +32,22 @@ async function main() {
     console.log(`Filter field: ${filterField}`);
     console.log(`Found ${filterValues.length} values to filter by`);
 
+    // Check for existing output and exclude already processed records
+    const outputFile = `${objectName}_${fields.join('_')}_results.csv`;
+    const processedIds = await getProcessedRecordIds(outputFile);
+
+    if (processedIds.size > 0) {
+      console.log(`Found existing output file with ${processedIds.size} already processed records`);
+      const originalCount = filterValues.length;
+      filterValues = filterValues.filter(value => !processedIds.has(value));
+      console.log(`Filtered ${originalCount - filterValues.length} already processed records. ${filterValues.length} remaining to process.`);
+
+      if (filterValues.length === 0) {
+        console.log('All records have already been processed!');
+        process.exit(0);
+      }
+    }
+
     // Authenticate to Salesforce
     console.log('Authenticating to Salesforce...');
     const { accessToken, instanceUrl } = await authorize();
@@ -58,37 +74,74 @@ async function main() {
       if (combinedText.trim()) {
         try {
           const response = await sendToLMStudio(prompt, combinedText);
-          results.push({
+          const result = {
             recordId: record.Id,
             [filterField]: record[filterField],
             originalText: combinedText,
             response: response
-          });
+          };
+          results.push(result);
+
+          // Append this single result immediately to support interruption/resumption
+          await appendResultsToCSV([result], outputFile, filterField, true);
+          console.log(`  ✓ Result written to ${outputFile}`);
+
         } catch (error) {
           console.error(`Error processing record ${record.Id}:`, error.message);
-          results.push({
+          const errorResult = {
             recordId: record.Id,
             [filterField]: record[filterField],
             originalText: combinedText,
             response: `Error: ${error.message}`
-          });
+          };
+          results.push(errorResult);
+
+          // Append error result immediately
+          await appendResultsToCSV([errorResult], outputFile, filterField, true);
+          console.log(`  ⚠ Error result written to ${outputFile}`);
         }
       } else {
         console.log(`Skipping record ${record.Id} - all specified fields are empty`);
       }
     }
 
-    // Write results to CSV
-    const outputFile = `${objectName}_${fields.join('_')}_results.csv`;
-    await writeResultsToCSV(results, outputFile, filterField);
-
-    console.log(`Results written to ${outputFile}`);
+    console.log(`Job completed! All results written to ${outputFile}`);
     console.log(`Processed ${results.length} records successfully`);
 
   } catch (error) {
     console.error('Error:', error.message);
     process.exit(1);
   }
+}
+
+async function getProcessedRecordIds(outputFilePath) {
+  const processedIds = new Set();
+
+  if (!fs.existsSync(outputFilePath)) {
+    return processedIds;
+  }
+
+  return new Promise((resolve, reject) => {
+    fs.createReadStream(outputFilePath)
+      .pipe(csv({
+        skipEmptyLines: true,
+        stripBOM: true
+      }))
+      .on('data', (data) => {
+        // Try different possible column names for the record ID
+        const recordId = data['Salesforce Record ID'] || data['recordId'] || data[Object.keys(data)[0]];
+        if (recordId && recordId.trim()) {
+          processedIds.add(recordId.trim());
+        }
+      })
+      .on('end', () => {
+        resolve(processedIds);
+      })
+      .on('error', (error) => {
+        console.error(`Warning: Could not read existing output file: ${error.message}`);
+        resolve(processedIds); // Return empty set on error
+      });
+  });
 }
 
 async function readCsvFile(csvFilePath) {
@@ -317,7 +370,12 @@ async function sendToLMStudio(prompt, text) {
   }
 }
 
-async function writeResultsToCSV(results, filename, filterField) {
+async function appendResultsToCSV(results, filename, filterField, skipHeaderCheck = false) {
+  if (results.length === 0) return;
+
+  const fileExists = fs.existsSync(filename);
+  const writeHeader = !fileExists && !skipHeaderCheck;
+
   const csvWriter = createObjectCsvWriter({
     path: filename,
     header: [
@@ -325,14 +383,20 @@ async function writeResultsToCSV(results, filename, filterField) {
       { id: filterField, title: filterField },
       { id: 'originalText', title: 'Original Text' },
       { id: 'response', title: 'LM Studio Response' }
-    ]
+    ],
+    append: fileExists
   });
 
   await csvWriter.writeRecords(results);
+}
+
+// Keep the old function for backward compatibility
+async function writeResultsToCSV(results, filename, filterField) {
+  await appendResultsToCSV(results, filename, filterField, false);
 }
 
 if (require.main === module) {
   main();
 }
 
-module.exports = { main, readCsvFile, getFieldMetadata, combineFieldsWithLabels, chunkArray, querySalesforceRecordsChunk, querySalesforceRecords, sendToLMStudio, writeResultsToCSV };
+module.exports = { main, getProcessedRecordIds, readCsvFile, getFieldMetadata, combineFieldsWithLabels, chunkArray, querySalesforceRecordsChunk, querySalesforceRecords, sendToLMStudio, appendResultsToCSV, writeResultsToCSV };
