@@ -21,19 +21,32 @@ async function main() {
   const objectName = getArgValue('-o');
   const fieldNames = getArgValue('-f');
   const csvFile = getArgValue('-i');
-  const prompt = getArgValue('-p');
+  let prompt = getArgValue('-p');
+  const promptFile = getArgValue('-pf');
   const jsonSchemaFile = getArgValue('-j');
   const hasJsonSchema = jsonSchemaFile !== null;
 
+  // Load prompt from file if -pf is provided
+  if (promptFile) {
+    try {
+      prompt = fs.readFileSync(promptFile, 'utf8').trim();
+      console.log(`Loaded prompt from file: ${promptFile}`);
+    } catch (error) {
+      console.error(`Error loading prompt file: ${error.message}`);
+      process.exit(1);
+    }
+  }
+
   // Validate required arguments
   if (!objectName || !fieldNames || !csvFile || !prompt) {
-    console.error('Usage: node index.js -o <salesforce-object> -f <field-names> -i <csv-file> -p <prompt> [-c] [-j <json-schema-file>]');
+    console.error('Usage: node index.js -o <salesforce-object> -f <field-names> -i <csv-file> (-p <prompt> | -pf <prompt-file>) [-c] [-j <json-schema-file>]');
     console.error('');
     console.error('Required flags:');
     console.error('  -o <salesforce-object>   Salesforce object name');
     console.error('  -f <field-names>         Field name(s) - comma-separated for multiple');
     console.error('  -i <csv-file>            Input CSV file with record IDs');
-    console.error('  -p <prompt>              AI prompt for analysis');
+    console.error('  -p <prompt>              AI prompt for analysis (inline)');
+    console.error('  -pf <prompt-file>        AI prompt from text file (alternative to -p)');
     console.error('');
     console.error('Optional flags:');
     console.error('  -c                       Use Microsoft Copilot instead of LM Studio');
@@ -41,8 +54,8 @@ async function main() {
     console.error('');
     console.error('Examples:');
     console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract meta-themes"');
-    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c -i survey-ids.csv -p "Extract themes" -c');
-    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract themes" -j schema.json -c');
+    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -pf prompt.txt -c');
+    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -pf prompt.txt -j schema.json -c');
     process.exit(1);
   }
 
@@ -77,8 +90,8 @@ async function main() {
 
     // Check for existing output and exclude already processed records
     const outputFile = hasJsonSchema ?
-      `${objectName}_${fields.join('_')}_results.json` :
-      `${objectName}_${fields.join('_')}_results.csv`;
+      `${objectName}_results.json` :
+      `${objectName}_results.csv`;
     const processedIds = hasJsonSchema ?
       await getProcessedRecordIdsFromJson(outputFile) :
       await getProcessedRecordIds(outputFile);
@@ -424,7 +437,7 @@ async function sendToLMStudio(prompt, text) {
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: 30000 // 30 second timeout
+      timeout: 60 * 10 * 1000 // 30 second timeout
     });
 
     return response.data.choices[0].message.content;

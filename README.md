@@ -49,7 +49,7 @@ node index.js -o <salesforce-object> -f <field-names> -i <csv-file> -p <prompt> 
 - `-o <salesforce-object>` - Salesforce object name
 - `-f <field-names>` - Field name(s), comma-separated for multiple fields
 - `-i <csv-file>` - Input CSV file with record IDs to filter by
-- `-p <prompt>` - AI prompt for analysis
+- `-p <prompt>` **OR** `-pf <prompt-file>` - AI prompt for analysis (inline or from file)
 
 ### Optional Flags
 - `-c` - Use Microsoft Copilot (Azure OpenAI) instead of LM Studio
@@ -82,6 +82,14 @@ node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i su
 
 # This creates Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_results.json
 # instead of a CSV file
+```
+
+#### Using Prompt from File
+```bash
+# Load a multi-line prompt from a text file
+node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -pf prompt-example.txt -c
+
+# Useful for complex, reusable prompts with multiple instructions
 ```
 
 This will:
