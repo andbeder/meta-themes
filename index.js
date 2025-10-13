@@ -10,19 +10,55 @@ const authorize = require('./sfdcJwtAuth');
 async function main() {
   const args = process.argv.slice(2);
 
-  // Check for -c flag
+  // Parse flags
   const useCopilot = args.includes('-c');
-  const filteredArgs = args.filter(arg => arg !== '-c');
 
-  if (filteredArgs.length < 4) {
-    console.error('Usage: node index.js <salesforce-object> <field-names> <prompt> <csv-file> [-c]');
-    console.error('Example: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv');
-    console.error('Multiple fields: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes" survey-ids.csv');
-    console.error('Use Copilot: node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes" survey-ids.csv -c');
+  const getArgValue = (flag) => {
+    const index = args.indexOf(flag);
+    return index !== -1 && index + 1 < args.length ? args[index + 1] : null;
+  };
+
+  const objectName = getArgValue('-o');
+  const fieldNames = getArgValue('-f');
+  const csvFile = getArgValue('-i');
+  const prompt = getArgValue('-p');
+  const jsonSchemaFile = getArgValue('-j');
+  const hasJsonSchema = jsonSchemaFile !== null;
+
+  // Validate required arguments
+  if (!objectName || !fieldNames || !csvFile || !prompt) {
+    console.error('Usage: node index.js -o <salesforce-object> -f <field-names> -i <csv-file> -p <prompt> [-c] [-j <json-schema-file>]');
+    console.error('');
+    console.error('Required flags:');
+    console.error('  -o <salesforce-object>   Salesforce object name');
+    console.error('  -f <field-names>         Field name(s) - comma-separated for multiple');
+    console.error('  -i <csv-file>            Input CSV file with record IDs');
+    console.error('  -p <prompt>              AI prompt for analysis');
+    console.error('');
+    console.error('Optional flags:');
+    console.error('  -c                       Use Microsoft Copilot instead of LM Studio');
+    console.error('  -j <json-schema-file>    Output structured JSON using schema');
+    console.error('');
+    console.error('Examples:');
+    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract meta-themes"');
+    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c -i survey-ids.csv -p "Extract themes" -c');
+    console.error('  node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract themes" -j schema.json -c');
     process.exit(1);
   }
 
-  const [objectName, fieldNames, prompt, csvFile] = filteredArgs;
+  // Load JSON schema if provided
+  let jsonSchema = null;
+  if (hasJsonSchema) {
+    try {
+      const schemaContent = fs.readFileSync(jsonSchemaFile, 'utf8');
+      jsonSchema = JSON.parse(schemaContent);
+      console.log(`Loaded JSON schema from: ${jsonSchemaFile}`);
+    } catch (error) {
+      console.error(`Error loading JSON schema file: ${error.message}`);
+      process.exit(1);
+    }
+  }
+
   const fields = fieldNames.split(',').map(field => field.trim());
 
   console.log(`Scanning Salesforce object: ${objectName}`);
@@ -30,6 +66,7 @@ async function main() {
   console.log(`Using prompt: "${prompt}"`);
   console.log(`Using CSV file: ${csvFile}`);
   console.log(`AI Service: ${useCopilot ? 'Microsoft Copilot' : 'LM Studio'}`);
+  console.log(`Output format: ${hasJsonSchema ? 'JSON' : 'CSV'}`);
 
   try {
     // Read CSV file to get filter data
@@ -39,8 +76,12 @@ async function main() {
     console.log(`Found ${allFilterValues.length} values to filter by`);
 
     // Check for existing output and exclude already processed records
-    const outputFile = `${objectName}_${fields.join('_')}_results.csv`;
-    const processedIds = await getProcessedRecordIds(outputFile);
+    const outputFile = hasJsonSchema ?
+      `${objectName}_${fields.join('_')}_results.json` :
+      `${objectName}_${fields.join('_')}_results.csv`;
+    const processedIds = hasJsonSchema ?
+      await getProcessedRecordIdsFromJson(outputFile) :
+      await getProcessedRecordIds(outputFile);
 
     let filterValues = allFilterValues;
     if (processedIds.size > 0) {
@@ -80,9 +121,17 @@ async function main() {
       const combinedText = combineFieldsWithLabels(record, fields, fieldMetadata);
       if (combinedText.trim()) {
         try {
-          const response = useCopilot ?
-            await sendToCopilot(prompt, combinedText) :
-            await sendToLMStudio(prompt, combinedText);
+          let response;
+          if (useCopilot) {
+            response = hasJsonSchema ?
+              await sendToCopilotWithSchema(prompt, combinedText, jsonSchema) :
+              await sendToCopilot(prompt, combinedText);
+          } else {
+            response = hasJsonSchema ?
+              await sendToLMStudioWithSchema(prompt, combinedText, jsonSchema) :
+              await sendToLMStudio(prompt, combinedText);
+          }
+
           const result = {
             recordId: record.Id,
             [filterField]: record[filterField],
@@ -92,7 +141,11 @@ async function main() {
           results.push(result);
 
           // Append this single result immediately to support interruption/resumption
-          await appendResultsToCSV([result], outputFile, filterField, true);
+          if (hasJsonSchema) {
+            await appendResultsToJSON([result], outputFile, filterField);
+          } else {
+            await appendResultsToCSV([result], outputFile, filterField, true);
+          }
           console.log(`  ✓ Result written to ${outputFile}`);
 
         } catch (error) {
@@ -101,12 +154,16 @@ async function main() {
             recordId: record.Id,
             [filterField]: record[filterField],
             originalText: combinedText,
-            response: `Error: ${error.message}`
+            response: hasJsonSchema ? { error: error.message } : `Error: ${error.message}`
           };
           results.push(errorResult);
 
           // Append error result immediately
-          await appendResultsToCSV([errorResult], outputFile, filterField, true);
+          if (hasJsonSchema) {
+            await appendResultsToJSON([errorResult], outputFile, filterField);
+          } else {
+            await appendResultsToCSV([errorResult], outputFile, filterField, true);
+          }
           console.log(`  ⚠ Error result written to ${outputFile}`);
         }
       } else {
@@ -434,6 +491,147 @@ async function sendToCopilot(prompt, text) {
   }
 }
 
+async function sendToLMStudioWithSchema(prompt, text, jsonSchema) {
+  const lmStudioUrl = process.env.LM_STUDIO_URL || 'http://127.0.0.1:1234/v1/chat/completions';
+
+  const schemaInstructions = `You must respond with valid JSON that matches this schema:\n${JSON.stringify(jsonSchema.output_schema, null, 2)}`;
+
+  const requestBody = {
+    model: "local-model",
+    messages: [
+      {
+        role: "system",
+        content: `${jsonSchema.description || 'Extract structured data from text.'}\n\n${schemaInstructions}\n\nRespond only with valid JSON, no additional text.`
+      },
+      {
+        role: "user",
+        content: `${prompt}\n\nText to analyze: ${text}`
+      }
+    ],
+    temperature: 0.7,
+    max_tokens: 1000
+  };
+
+  try {
+    const response = await axios.post(lmStudioUrl, requestBody, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    });
+
+    const content = response.data.choices[0].message.content;
+    return JSON.parse(content);
+  } catch (error) {
+    if (error.response) {
+      throw new Error(`LM Studio API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    }
+    throw new Error(`LM Studio connection error: ${error.message}`);
+  }
+}
+
+async function sendToCopilotWithSchema(prompt, text, jsonSchema) {
+  const copilotApiKey = process.env.COPILOT_API_KEY;
+  const copilotUrl = process.env.COPILOT_API_URL;
+  const deployment = process.env.COPILOT_DEPLOYMENT || 'gpt-5-chat';
+  const apiVersion = process.env.AZURE_API_VERSION || '2024-02-15-preview';
+
+  if (!copilotApiKey) {
+    throw new Error('COPILOT_API_KEY environment variable is required for Copilot integration');
+  }
+
+  if (!copilotUrl) {
+    throw new Error('COPILOT_API_URL environment variable is required. Set it to your Azure OpenAI base URL (e.g., https://xxx.openai.azure.com)');
+  }
+
+  const fullUrl = `${copilotUrl}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
+
+  const requestBody = {
+    messages: [
+      {
+        role: "system",
+        content: `${jsonSchema.description || 'Extract structured data from text.'}\n\nYou must respond with valid JSON that matches this schema:\n${JSON.stringify(jsonSchema.output_schema, null, 2)}\n\nRespond only with valid JSON, no additional text.`
+      },
+      {
+        role: "user",
+        content: `${prompt}\n\nText to analyze: ${text}`
+      }
+    ],
+    temperature: 0.7,
+    max_tokens: 1000,
+    response_format: { type: "json_object" }
+  };
+
+  try {
+    const response = await axios.post(fullUrl, requestBody, {
+      headers: {
+        'api-key': copilotApiKey,
+        'Content-Type': 'application/json'
+      },
+      timeout: 60000
+    });
+
+    if (response.data.choices && response.data.choices[0]) {
+      const content = response.data.choices[0].message.content;
+      return JSON.parse(content);
+    } else {
+      throw new Error(`Unexpected API response format: ${JSON.stringify(response.data)}`);
+    }
+  } catch (error) {
+    if (error.response) {
+      throw new Error(`Copilot API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    }
+    throw new Error(`Copilot connection error: ${error.message}`);
+  }
+}
+
+async function getProcessedRecordIdsFromJson(outputFilePath) {
+  const processedIds = new Set();
+
+  if (!fs.existsSync(outputFilePath)) {
+    return processedIds;
+  }
+
+  try {
+    const content = fs.readFileSync(outputFilePath, 'utf8');
+    const data = JSON.parse(content);
+
+    if (Array.isArray(data.results)) {
+      data.results.forEach(result => {
+        if (result.recordId) {
+          processedIds.add(result.recordId);
+        }
+      });
+    }
+  } catch (error) {
+    console.error(`Warning: Could not read existing JSON output file: ${error.message}`);
+  }
+
+  return processedIds;
+}
+
+async function appendResultsToJSON(results, filename, filterField) {
+  if (results.length === 0) return;
+
+  let existingData = { results: [] };
+
+  // Read existing file if it exists
+  if (fs.existsSync(filename)) {
+    try {
+      const content = fs.readFileSync(filename, 'utf8');
+      existingData = JSON.parse(content);
+    } catch (error) {
+      console.warn(`Warning: Could not read existing JSON file, creating new one: ${error.message}`);
+    }
+  }
+
+  // Append new results
+  existingData.results.push(...results);
+
+  // Write back to file
+  fs.writeFileSync(filename, JSON.stringify(existingData, null, 2), 'utf8');
+}
+
 async function appendResultsToCSV(results, filename, filterField, skipHeaderCheck = false) {
   if (results.length === 0) return;
 
@@ -463,4 +661,21 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main, getProcessedRecordIds, readCsvFile, getFieldMetadata, combineFieldsWithLabels, chunkArray, querySalesforceRecordsChunk, querySalesforceRecords, sendToLMStudio, sendToCopilot, appendResultsToCSV, writeResultsToCSV };
+module.exports = {
+  main,
+  getProcessedRecordIds,
+  getProcessedRecordIdsFromJson,
+  readCsvFile,
+  getFieldMetadata,
+  combineFieldsWithLabels,
+  chunkArray,
+  querySalesforceRecordsChunk,
+  querySalesforceRecords,
+  sendToLMStudio,
+  sendToLMStudioWithSchema,
+  sendToCopilot,
+  sendToCopilotWithSchema,
+  appendResultsToCSV,
+  appendResultsToJSON,
+  writeResultsToCSV
+};

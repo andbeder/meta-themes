@@ -42,33 +42,46 @@ A Node.js application that scans Salesforce objects for specific records defined
 ## Usage
 
 ```bash
-node index.js <salesforce-object> <field-names> <prompt> <csv-file> [-c]
+node index.js -o <salesforce-object> -f <field-names> -i <csv-file> -p <prompt> [-c] [-j <json-schema-file>]
 ```
 
-Where:
-- `<field-names>` can be:
-  - A single field: `Q6_Recognition_Thoughts__c`
-  - Multiple fields (comma-separated): `Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c`
-- `-c` flag: Use Microsoft Copilot instead of LM Studio
+### Required Flags
+- `-o <salesforce-object>` - Salesforce object name
+- `-f <field-names>` - Field name(s), comma-separated for multiple fields
+- `-i <csv-file>` - Input CSV file with record IDs to filter by
+- `-p <prompt>` - AI prompt for analysis
+
+### Optional Flags
+- `-c` - Use Microsoft Copilot (Azure OpenAI) instead of LM Studio
+- `-j <json-schema-file>` - Output structured JSON instead of CSV using the provided schema
 
 ### Examples
 
 #### LM Studio (Default)
 ```bash
 # Single field
-node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv
+node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract meta-themes from this survey response"
 
 # Multiple fields
-node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes from this survey response" survey-ids.csv
+node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c -i survey-ids.csv -p "Extract meta-themes from this survey response"
 ```
 
 #### Microsoft Copilot
 ```bash
 # Single field with Copilot
-node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c "Extract meta-themes from this survey response" survey-ids.csv -c
+node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract meta-themes from this survey response" -c
 
 # Multiple fields with Copilot
-node index.js Employee_Survey_Response__c Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c "Extract meta-themes from this survey response" survey-ids.csv -c
+node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c,Q4_Supervisor_Skills__c -i survey-ids.csv -p "Extract meta-themes from this survey response" -c
+```
+
+#### Structured JSON Output
+```bash
+# Output structured JSON using a schema definition
+node index.js -o Employee_Survey_Response__c -f Q6_Recognition_Thoughts__c -i survey-ids.csv -p "Extract themes" -j schema-example.json -c
+
+# This creates Employee_Survey_Response__c_Q6_Recognition_Thoughts__c_results.json
+# instead of a CSV file
 ```
 
 This will:
@@ -111,6 +124,54 @@ Employee_Record_ID__c
 ```
 
 The first column header will be used as the filter field name in the Salesforce query.
+
+### JSON Schema Format
+
+When using the `-j` flag, provide a JSON schema file that defines the structure of the output. The schema should include:
+
+- `description`: A description of what data to extract
+- `output_schema`: A JSON Schema definition of the expected output structure
+
+Example schema file (`schema-example.json`):
+```json
+{
+  "description": "Extract structured meta-themes from survey responses",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "themes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "type": "string",
+              "description": "The meta-theme identified"
+            },
+            "sentiment": {
+              "type": "string",
+              "enum": ["positive", "negative", "neutral", "mixed"],
+              "description": "Overall sentiment of the theme"
+            },
+            "confidence": {
+              "type": "number",
+              "description": "Confidence score from 0-1"
+            }
+          },
+          "required": ["theme", "sentiment"]
+        }
+      },
+      "summary": {
+        "type": "string",
+        "description": "Brief one-sentence summary of the response"
+      }
+    },
+    "required": ["themes", "summary"]
+  }
+}
+```
+
+The AI will return structured JSON matching this schema for each record, making it easy to programmatically process the results.
 
 ## Configuration
 
